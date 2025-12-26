@@ -1,0 +1,8 @@
+{
+  "name": "FixOS - ERP & Gestão Técnica Profissional",
+  "description": "Sistema completo de ordem de serviço, vendas e gestão com automação de WhatsApp e dashboard inteligente.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
