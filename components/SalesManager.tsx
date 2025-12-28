@@ -40,7 +40,12 @@ const SalesManager: React.FC = () => {
         alert("Produto sem estoque!");
         return;
       }
-      setCart([...cart, { productId: product.id, quantity: 1, priceAtTime: Number(product.price) }]);
+      setCart([...cart, { 
+        productId: product.id, 
+        quantity: 1, 
+        priceAtTime: Number(product.price),
+        costAtTime: Number(product.cost) // Captura o custo atual
+      }]);
     }
   };
 
@@ -48,7 +53,8 @@ const SalesManager: React.FC = () => {
     setCart(cart.filter(i => i.productId !== productId));
   };
 
-  const calculateTotal = () => cart.reduce((acc, item) => acc + (Number(item.priceAtTime) * item.quantity), 0);
+  const calculateTotal = () => cart.reduce((acc, item) => acc + (item.priceAtTime * item.quantity), 0);
+  const calculateTotalCost = () => cart.reduce((acc, item) => acc + (item.costAtTime * item.quantity), 0);
 
   const handleFinalizeSale = async () => {
     if (cart.length === 0) return;
@@ -59,6 +65,7 @@ const SalesManager: React.FC = () => {
       customerId: selectedCustomerId || undefined,
       items: cart,
       total: calculateTotal(),
+      totalCost: calculateTotalCost(),
       paymentMethod,
       createdAt: new Date().toISOString()
     };
@@ -111,7 +118,10 @@ const SalesManager: React.FC = () => {
                   <span className={`text-[10px] font-bold ${Number(p.stock) < 5 ? 'text-red-500' : 'text-emerald-600'}`}>{p.stock} un.</span>
                 </div>
                 <h4 className="font-bold text-slate-900 group-hover:text-blue-600 truncate">{p.name}</h4>
-                <p className="text-xl font-black text-slate-900 mt-2">R$ {Number(p.price).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                <div className="flex justify-between items-center mt-2">
+                  <p className="text-xl font-black text-slate-900">R$ {Number(p.price).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                  <span className="text-[9px] font-bold text-slate-400">Lucro: R$ {(p.price - p.cost).toFixed(2)}</span>
+                </div>
               </button>
             ))}
           </div>
@@ -122,7 +132,7 @@ const SalesManager: React.FC = () => {
         <div className="bg-white border border-slate-200 p-8 rounded-[40px] shadow-sm flex flex-col min-h-[600px]">
           <div className="flex items-center gap-3 mb-8">
             <ShoppingCart className="text-blue-600" />
-            <h3 className="text-xl font-black text-slate-900">Finalização de Venda</h3>
+            <h3 className="text-xl font-black text-slate-900">Carrinho de Venda</h3>
           </div>
 
           <div className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
@@ -135,7 +145,7 @@ const SalesManager: React.FC = () => {
                     <p className="text-[10px] text-slate-400 font-bold">{item.quantity}x R$ {item.priceAtTime.toFixed(2)}</p>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className="font-black text-blue-600">R$ {(Number(item.quantity) * item.priceAtTime).toFixed(2)}</span>
+                    <span className="font-black text-blue-600">R$ {(item.quantity * item.priceAtTime).toFixed(2)}</span>
                     <button onClick={() => removeFromCart(item.productId)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><X size={18} /></button>
                   </div>
                 </div>
@@ -150,6 +160,13 @@ const SalesManager: React.FC = () => {
           </div>
 
           <div className="mt-8 space-y-6 pt-8 border-t border-slate-100">
+            <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+               <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-black text-emerald-600 uppercase">Lucro Estimado</span>
+                  <span className="text-sm font-black text-emerald-700">R$ {(calculateTotal() - calculateTotalCost()).toFixed(2)}</span>
+               </div>
+            </div>
+
             <div className="space-y-4">
                <div className="flex flex-col gap-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Cliente Vinculado</label>
@@ -164,7 +181,7 @@ const SalesManager: React.FC = () => {
               </div>
               
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Método de Pagamento</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Pagamento</label>
                 <div className="grid grid-cols-3 gap-2">
                   {['Dinheiro', 'Cartão', 'Pix'].map(m => (
                     <button 
@@ -179,17 +196,17 @@ const SalesManager: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex justify-between items-end bg-slate-50 p-6 rounded-3xl border border-slate-200">
+            <div className="flex justify-between items-end bg-slate-900 p-6 rounded-3xl">
               <div>
-                <p className="text-[10px] font-black text-slate-400 uppercase">Subtotal</p>
-                <p className="text-4xl font-black text-slate-900">R$ {calculateTotal().toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase">Total a Pagar</p>
+                <p className="text-3xl font-black text-white">R$ {calculateTotal().toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
               </div>
               <button 
                 onClick={handleFinalizeSale}
                 disabled={cart.length === 0 || isProcessing}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-xl shadow-blue-500/20 active:scale-95 transition-all disabled:opacity-50"
+                className="bg-blue-500 hover:bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase shadow-xl active:scale-95 transition-all disabled:opacity-50"
               >
-                {isProcessing ? 'Finalizando...' : 'Concluir'}
+                {isProcessing ? '...' : 'FINALIZAR'}
               </button>
             </div>
           </div>
@@ -203,12 +220,12 @@ const SalesManager: React.FC = () => {
               <CheckCircle size={40} />
             </div>
             <h3 className="text-2xl font-black text-slate-900 mb-2">Venda Concluída!</h3>
-            <p className="text-slate-500 text-sm mb-8 font-medium">O registro foi processado e o estoque atualizado com sucesso.</p>
+            <p className="text-slate-500 text-sm mb-8 font-medium">Lançamento automático gerado no financeiro.</p>
             <button 
               onClick={() => setSaleSuccess(null)}
-              className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-xs uppercase shadow-lg shadow-blue-100"
+              className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-xs uppercase"
             >
-              Nova Venda
+              OK
             </button>
           </div>
         </div>

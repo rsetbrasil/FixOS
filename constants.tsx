@@ -10,15 +10,18 @@ import {
   ClipboardList,
   Wrench,
   BarChart3,
-  Wallet
+  Wallet,
+  ArrowRightLeft
 } from 'lucide-react';
 
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Painel FixOS', icon: <LayoutDashboard size={20} /> },
   { id: 'orders', label: 'Ordens de Serviço', icon: <ClipboardList size={20} /> },
-  { id: 'finance', label: 'Financeiro', icon: <Wallet size={20} /> },
+  { id: 'accounts', label: 'Contas Pagar/Receber', icon: <ArrowRightLeft size={20} /> },
+  { id: 'finance', label: 'Faturamento', icon: <Wallet size={20} /> },
   { id: 'customers', label: 'Clientes', icon: <Users size={20} /> },
-  { id: 'products', label: 'Estoque/Serviços', icon: <Package size={20} /> },
+  { id: 'products', label: 'Estoque de Peças', icon: <Package size={20} /> },
+  { id: 'services', label: 'Serviços Técnicos', icon: <Wrench size={20} /> },
   { id: 'suppliers', label: 'Fornecedores', icon: <Truck size={20} /> },
   { id: 'equipment', label: 'Equipamentos', icon: <Wrench size={20} /> },
   { id: 'sales', label: 'Vendas Diretas', icon: <ShoppingCart size={20} /> },

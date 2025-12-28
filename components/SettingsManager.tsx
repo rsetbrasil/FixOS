@@ -20,6 +20,7 @@ const SettingsManager: React.FC = () => {
   const [termsExit, setTermsExit] = useState('');
   const [defaultWarranty, setDefaultWarranty] = useState(90);
   const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // Business Info
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>({
@@ -30,7 +31,6 @@ const SettingsManager: React.FC = () => {
   const [neonUrl, setNeonUrl] = useState(localStorage.getItem('neon_connection_string') || DEFAULT_URL);
   const [dbMode, setDbMode] = useState(localStorage.getItem('db_mode') || 'cloud');
   const [setupStatus, setSetupStatus] = useState<{success?: boolean, msg?: string} | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -60,13 +60,22 @@ const SettingsManager: React.FC = () => {
   };
 
   const handleSaveBusinessInfo = async () => {
-    await db.saveBusinessInfo(businessInfo);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 2000);
+    setIsSaving(true);
+    try {
+      await db.saveBusinessInfo(businessInfo);
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 2000);
+    } catch (err) {
+      alert("Erro ao salvar dados da empresa.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleSaveAllTerms = async () => {
+    setIsSaving(true);
     try {
+      // Importante: Manter o valor puro da string (com \n e espaços)
       await Promise.all([
         db.saveTermsEntry(termsEntry),
         db.saveTermsBudget(termsBudget),
@@ -76,7 +85,10 @@ const SettingsManager: React.FC = () => {
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 2000);
     } catch (err) {
-      alert("Erro ao salvar termos.");
+      console.error("Erro ao salvar termos:", err);
+      alert("Erro ao salvar termos no banco de dados.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -117,10 +129,11 @@ const SettingsManager: React.FC = () => {
           </div>
           <button
             onClick={handleSaveBusinessInfo}
-            className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-black transition-all shadow-xl uppercase text-xs tracking-widest ${isSaved ? 'bg-emerald-600 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+            disabled={isSaving}
+            className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-black transition-all shadow-xl uppercase text-xs tracking-widest ${isSaved ? 'bg-emerald-600 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'} disabled:opacity-50`}
           >
             {isSaved ? <Check size={18} /> : <Save size={18} />}
-            {isSaved ? 'SALVO!' : 'SALVAR CABEÇALHO'}
+            {isSaved ? 'SALVO!' : isSaving ? 'SALVANDO...' : 'SALVAR CABEÇALHO'}
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -190,8 +203,13 @@ const SettingsManager: React.FC = () => {
               </div>
               <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button onClick={handleInitializeTables} className="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-xs font-black uppercase tracking-widest hover:bg-slate-700 transition-all">Setup de Tabelas</button>
-                <button onClick={() => db.syncLocalToCloud()} className="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-xs font-black uppercase tracking-widest hover:bg-slate-700 transition-all">Sincronizar Agora</button>
+                <button onClick={() => db.initializeTables()} className="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-xs font-black uppercase tracking-widest hover:bg-slate-700 transition-all">Sincronizar Estrutura</button>
               </div>
+              {setupStatus && (
+                <div className={`mt-4 p-4 rounded-xl text-xs font-bold ${setupStatus.success ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                  {setupStatus.msg}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -227,7 +245,14 @@ const SettingsManager: React.FC = () => {
             <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl"><FileText size={28} /></div>
             <h2 className="text-2xl font-black text-slate-900 tracking-tight">Termos de Responsabilidade</h2>
           </div>
-          <button onClick={handleSaveAllTerms} className="bg-indigo-600 text-white px-10 py-4 rounded-2xl font-black shadow-lg uppercase text-xs tracking-widest">Salvar Termos</button>
+          <button 
+            onClick={handleSaveAllTerms} 
+            disabled={isSaving}
+            className={`px-10 py-4 rounded-2xl font-black shadow-lg uppercase text-xs tracking-widest transition-all ${isSaved ? 'bg-emerald-600' : 'bg-indigo-600'} text-white disabled:opacity-50`}
+          >
+            {isSaved ? <Check className="inline mr-2" size={16}/> : <Save className="inline mr-2" size={16}/>}
+            {isSaved ? 'SALVO!' : isSaving ? 'SALVANDO...' : 'SALVAR TERMOS'}
+          </button>
         </div>
         <div className="flex gap-2 mb-8 bg-slate-50 p-2 rounded-2xl">
           {['entry', 'budget', 'exit'].map(tab => (
@@ -241,7 +266,8 @@ const SettingsManager: React.FC = () => {
           ))}
         </div>
         <textarea
-          className="w-full h-80 border-none bg-slate-50/50 p-8 rounded-3xl outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm leading-relaxed text-slate-700 shadow-inner"
+          spellCheck={false}
+          className="w-full h-80 border-none bg-slate-50/50 p-8 rounded-3xl outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm leading-relaxed text-slate-700 shadow-inner whitespace-pre overflow-x-auto"
           value={activeTermTab === 'entry' ? termsEntry : activeTermTab === 'budget' ? termsBudget : termsExit}
           onChange={(e) => {
             if (activeTermTab === 'entry') setTermsEntry(e.target.value);

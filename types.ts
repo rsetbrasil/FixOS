@@ -63,6 +63,7 @@ export interface SaleItem {
   productId: string;
   quantity: number;
   priceAtTime: number;
+  costAtTime: number;
 }
 
 export interface Sale {
@@ -70,8 +71,28 @@ export interface Sale {
   customerId?: string;
   items: SaleItem[];
   total: number;
+  totalCost: number;
   paymentMethod: string;
   createdAt: string;
+}
+
+export interface Occurrence {
+  id: string;
+  description: string;
+  timestamp: string;
+  type: 'Informação' | 'Alerta' | 'Problema';
+}
+
+export interface FinancialAccount {
+  id: string;
+  description: string;
+  amount: number;
+  dueDate: string;
+  type: 'PAGAR' | 'RECEBER';
+  status: 'PENDENTE' | 'PAGO';
+  category: string;
+  createdAt: string;
+  relatedId?: string; // ID da OS ou Venda relacionada
 }
 
 export interface ServiceOrder {
@@ -86,14 +107,18 @@ export interface ServiceOrder {
   technicalReport: string;
   accessories: string;
   checklist: Record<string, boolean>;
+  checklistObservations?: string;
   items: Array<{
     productId: string;
     quantity: number;
     priceAtTime: number;
+    costAtTime: number;
   }>;
   laborCost: number;
+  laborCostBase?: number; // Custo de execução (ex: comissão técnico)
   diagnosisFee: number;
   total: number;
+  totalCost: number;
   warrantyDays: number;
   warrantyExpiryDate?: string;
   createdAt: string;
@@ -105,4 +130,5 @@ export interface ServiceOrder {
     timestamp: string;
     note?: string;
   }>;
+  occurrences?: Occurrence[];
 }

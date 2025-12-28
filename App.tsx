@@ -9,15 +9,16 @@ import ProductManager from './components/ProductManager';
 import EquipmentManager from './components/EquipmentManager';
 import SalesManager from './components/SalesManager';
 import FinancialManager from './components/FinancialManager';
+import AccountsManager from './components/AccountsManager';
+import { db } from './utils/storage';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
-    const handleError = (event: ErrorEvent) => {
-      console.error("Erro capturado:", event.error);
-    };
+    db.initializeTables().catch(err => console.error("Falha ao sincronizar tabelas:", err));
+    const handleError = (event: ErrorEvent) => { console.error("Erro capturado:", event.error); };
     window.addEventListener('error', handleError);
     return () => window.removeEventListener('error', handleError);
   }, []);
@@ -25,22 +26,16 @@ const App: React.FC = () => {
   const renderContent = () => {
     try {
       switch (activeTab) {
-        case 'dashboard':
-          return <Dashboard />;
-        case 'customers':
-          return <CustomerManager />;
-        case 'orders':
-          return <ServiceOrderManager />;
-        case 'finance':
-          return <FinancialManager />;
-        case 'settings':
-          return <SettingsManager />;
-        case 'products':
-          return <ProductManager />;
-        case 'equipment':
-          return <EquipmentManager />;
-        case 'sales':
-          return <SalesManager />;
+        case 'dashboard': return <Dashboard />;
+        case 'customers': return <CustomerManager />;
+        case 'orders': return <ServiceOrderManager />;
+        case 'accounts': return <AccountsManager />;
+        case 'finance': return <FinancialManager />;
+        case 'settings': return <SettingsManager />;
+        case 'products': return <ProductManager mode="products" />;
+        case 'services': return <ProductManager mode="services" />;
+        case 'equipment': return <EquipmentManager />;
+        case 'sales': return <SalesManager />;
         case 'suppliers':
           return (
             <div className="bg-white p-12 rounded-[40px] text-center shadow-sm border border-gray-100 animate-in fade-in">
@@ -51,8 +46,7 @@ const App: React.FC = () => {
               <p className="text-gray-500 font-medium max-w-sm mx-auto">Em breve: Gerenciamento completo de compras, notas fiscais e logística de peças.</p>
             </div>
           );
-        default:
-          return <Dashboard />;
+        default: return <Dashboard />;
       }
     } catch (err) {
       return (
@@ -63,20 +57,6 @@ const App: React.FC = () => {
       );
     }
   };
-
-  if (hasError) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
-        <div className="max-w-md w-full bg-white p-12 rounded-[50px] shadow-3xl text-center border border-gray-100 animate-in zoom-in-95">
-          <div className="w-20 h-20 bg-red-50 text-red-500 rounded-[30px] flex items-center justify-center mx-auto mb-8">
-            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-          </div>
-          <h1 className="text-2xl font-black text-gray-900 mb-2">Ops! Falha Crítica</h1>
-          <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full py-5 bg-gray-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-xl">Resetar Tudo e Reinstalar</button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <Layout activeTab={activeTab} onTabChange={setActiveTab}>
