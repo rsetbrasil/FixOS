@@ -51,15 +51,21 @@ const queryNeon = async (sql: string, params: any[] = []) => {
     const sqlClient = neon(url);
     return await (sqlClient as any)(sql, params);
   } catch (err: any) {
-    console.warn("Neon Cloud Error:", err.message);
-    return null;
+    console.error("ERRO POSTGRESQL:", err.message);
+    throw err;
   }
 };
 
 const ensureObject = (val: any) => {
   if (val === null || val === undefined) return {};
   if (typeof val === 'string') {
-    try { return JSON.parse(val); } catch { return val; }
+    try {
+      // Se for um JSON válido (ex: objeto ou array stringificado), parseia.
+      return JSON.parse(val);
+    } catch {
+      // Se não for JSON (ex: um texto simples de termos), retorna a string original.
+      return val;
+    }
   }
   return val;
 };
@@ -91,14 +97,12 @@ export const db = {
     if (isCloudEnabled()) {
       try {
         for (const sql of commands) { await queryNeon(sql); }
-        try { await queryNeon(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS photos JSONB`); } catch(e){}
-        try { await queryNeon(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS technician TEXT`); } catch(e){}
-        return { success: true, msg: "Banco Cloud sincronizado!" };
+        return { success: true, msg: "Cloud Conectado!" };
       } catch (err: any) {
         return { success: false, msg: "Erro Cloud: " + err.message };
       }
     }
-    return { success: true, msg: "Usando banco Local." };
+    return { success: true, msg: "Offline Mode." };
   },
 
   getCustomers: async (): Promise<Customer[]> => {
@@ -142,7 +146,7 @@ export const db = {
   updateProduct: async (product: Product) => {
     await dbInstance.products.put(product);
     if (isCloudEnabled()) {
-      await queryNeon(`INSERT INTO products (id, name, sku, price, cost, stock, category) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO UPDATE SET name = $2, sku = $3, price = $4, cost = $5, stock = $6, category = $7`, [product.id, product.name, product.sku || '', product.price, product.cost, product.stock, product.category]);
+      await queryNeon(`INSERT INTO products (id, name, sku, price, cost, stock, category) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO UPDATE SET name = $2, sku = $3, price = $4, cost = $5, stock = $6, category = $7`, [product.id, product.name, product.sku || '', Number(product.price), Number(product.cost), Number(product.stock), product.category]);
     }
   },
 
@@ -151,18 +155,31 @@ export const db = {
       const rows = await queryNeon('SELECT * FROM orders ORDER BY order_number DESC');
       if (rows) {
         return rows.map(r => ({
-          ...r,
+          id: r.id,
           orderNumber: Number(r.order_number),
           customerId: r.customer_id,
           equipmentId: r.equipment_id,
+          status: r.status,
+          problemDescription: r.problem_description,
+          technicalReport: r.technical_report,
+          accessories: r.accessories,
           checklist: ensureObject(r.checklist),
+          checklistObservations: r.checklist_observations,
           occurrences: ensureArray(r.occurrences),
-          items: ensureArray(r.items).map((i: any) => ({ ...i, priceAtTime: Number(i.priceAtTime), costAtTime: Number(i.costAtTime || 0) })),
-          laborCost: Number(r.labor_cost),
+          items: ensureArray(r.items).map((i: any) => ({ 
+            productId: i.productId,
+            quantity: Number(i.quantity || 1),
+            priceAtTime: Number(i.priceAtTime || 0), 
+            costAtTime: Number(i.costAtTime || 0)
+          })),
+          laborCost: Number(r.labor_cost || 0),
           laborCostBase: Number(r.labor_cost_base || 0),
           diagnosisFee: Number(r.diagnosis_fee || 0),
-          total: Number(r.total),
+          total: Number(r.total || 0),
           totalCost: Number(r.total_cost || 0),
+          warrantyDays: Number(r.warranty_days || 0),
+          paymentStatus: r.payment_status,
+          paymentMethod: r.payment_method,
           history: ensureArray(r.history),
           photos: ensureArray(r.photos),
           createdAt: r.created_at,
@@ -175,74 +192,71 @@ export const db = {
   },
 
   updateOrder: async (order: ServiceOrder) => {
-    // Primeiro salva localmente (Mais rápido e garantido)
-    await dbInstance.orders.put(order);
+    const sanitizedOrder: ServiceOrder = {
+      ...order,
+      laborCost: Number(order.laborCost) || 0,
+      laborCostBase: Number(order.laborCostBase) || 0,
+      diagnosisFee: Number(order.diagnosisFee) || 0,
+      total: Number(order.total) || 0,
+      totalCost: Number(order.totalCost) || 0,
+      warrantyDays: Number(order.warrantyDays) || 90,
+      items: (order.items || []).map(i => ({
+        productId: i.productId,
+        quantity: Number(i.quantity) || 1,
+        priceAtTime: Number(i.priceAtTime) || 0,
+        costAtTime: Number(i.costAtTime) || 0
+      })),
+      photos: order.photos || [],
+      history: order.history || [],
+      updatedAt: new Date().toISOString()
+    };
+
+    await dbInstance.orders.put(sanitizedOrder);
 
     if (isCloudEnabled()) {
       try {
-        await queryNeon(`
-          INSERT INTO orders (id, order_number, customer_id, equipment_id, status, problem_description, technical_report, accessories, checklist, checklist_observations, occurrences, items, labor_cost, labor_cost_base, diagnosis_fee, total, total_cost, warranty_days, created_at, updated_at, payment_status, history, payment_method, photos, technician)
+        const sql = `
+          INSERT INTO orders (
+            id, order_number, customer_id, equipment_id, status, problem_description, technical_report, 
+            accessories, checklist, checklist_observations, occurrences, items, labor_cost, labor_cost_base, 
+            diagnosis_fee, total, total_cost, warranty_days, created_at, updated_at, payment_status, 
+            history, payment_method, photos, technician
+          )
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
           ON CONFLICT (id) DO UPDATE SET 
-            status = $5, 
-            problem_description = $6, 
-            technical_report = $7, 
-            accessories = $8, 
-            checklist = $9, 
-            checklist_observations = $10, 
-            occurrences = $11, 
-            items = $12, 
-            labor_cost = $13, 
-            labor_cost_base = $14, 
-            diagnosis_fee = $15, 
-            total = $16, 
-            total_cost = $17, 
-            updated_at = $20, 
-            payment_status = $21, 
-            history = $22, 
-            payment_method = $23, 
-            photos = $24,
-            technician = $25
-        `, [
-          order.id, 
-          order.orderNumber, 
-          order.customerId, 
-          order.equipmentId, 
-          order.status, 
-          order.problemDescription || '', 
-          order.technicalReport || '', 
-          order.accessories || '', 
-          JSON.stringify(order.checklist || {}), 
-          order.checklistObservations || '', 
-          JSON.stringify(order.occurrences || []), 
-          JSON.stringify(order.items || []), 
-          order.laborCost || 0, 
-          order.laborCostBase || 0, 
-          order.diagnosisFee || 0, 
-          order.total || 0, 
-          order.totalCost || 0, 
-          order.warrantyDays || 90, 
-          order.createdAt, 
-          order.updatedAt, 
-          order.paymentStatus, 
-          JSON.stringify(order.history || []), 
-          order.paymentMethod || '', 
-          JSON.stringify(order.photos || []),
-          order.technician || ''
+            customer_id = EXCLUDED.customer_id, equipment_id = EXCLUDED.equipment_id, status = EXCLUDED.status, 
+            problem_description = EXCLUDED.problem_description, technical_report = EXCLUDED.technical_report, 
+            accessories = EXCLUDED.accessories, checklist = EXCLUDED.checklist, 
+            checklist_observations = EXCLUDED.checklist_observations, occurrences = EXCLUDED.occurrences, 
+            items = EXCLUDED.items, labor_cost = EXCLUDED.labor_cost, labor_cost_base = EXCLUDED.labor_cost_base, 
+            diagnosis_fee = EXCLUDED.diagnosis_fee, total = EXCLUDED.total, total_cost = EXCLUDED.total_cost, 
+            warranty_days = EXCLUDED.warranty_days, updated_at = EXCLUDED.updated_at, 
+            payment_status = EXCLUDED.payment_status, history = EXCLUDED.history, 
+            payment_method = EXCLUDED.payment_method, photos = EXCLUDED.photos, technician = EXCLUDED.technician
+        `;
+
+        await queryNeon(sql, [
+          sanitizedOrder.id, sanitizedOrder.orderNumber, sanitizedOrder.customerId, sanitizedOrder.equipmentId,
+          sanitizedOrder.status, sanitizedOrder.problemDescription || '', sanitizedOrder.technicalReport || '',
+          sanitizedOrder.accessories || '', sanitizedOrder.checklist || {}, sanitizedOrder.checklistObservations || '',
+          sanitizedOrder.occurrences || [], sanitizedOrder.items || [],
+          sanitizedOrder.laborCost, sanitizedOrder.laborCostBase, sanitizedOrder.diagnosisFee,
+          sanitizedOrder.total, sanitizedOrder.totalCost, sanitizedOrder.warrantyDays,
+          sanitizedOrder.createdAt, sanitizedOrder.updatedAt, sanitizedOrder.paymentStatus,
+          sanitizedOrder.history || [], sanitizedOrder.paymentMethod || '',
+          sanitizedOrder.photos || [], sanitizedOrder.technician || ''
         ]);
 
-        if (order.status === OrderStatus.DELIVERED) {
-          const accs = await queryNeon('SELECT id FROM financial_accounts WHERE related_id = $1', [order.id]);
-          if (accs && accs.length === 0) {
-            const accId = 'FIN_' + order.id;
-            await queryNeon(`
-              INSERT INTO financial_accounts (id, description, amount, due_date, type, status, category, created_at, related_id)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            `, [accId, `RECEITA O.S. #${order.orderNumber}`, order.total, new Date().toISOString().split('T')[0], 'RECEBER', 'PAGO', 'Ordens de Serviço', new Date().toISOString(), order.id]);
-          }
+        if (sanitizedOrder.status === OrderStatus.DELIVERED) {
+          const accId = 'FIN_' + sanitizedOrder.id;
+          await queryNeon(`
+            INSERT INTO financial_accounts (id, description, amount, due_date, type, status, category, created_at, related_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING
+          `, [accId, `O.S. #${sanitizedOrder.orderNumber}`, sanitizedOrder.total, sanitizedOrder.updatedAt.split('T')[0], 'RECEBER', 'PAGO', 'Ordens de Serviço', sanitizedOrder.createdAt, sanitizedOrder.id]);
         }
-      } catch (e) { console.error("Cloud Sync Error (Order):", e); }
+      } catch (err) {}
     }
+    return sanitizedOrder;
   },
 
   getFinancialAccounts: async (): Promise<FinancialAccount[]> => {
@@ -260,7 +274,7 @@ export const db = {
         INSERT INTO financial_accounts (id, description, amount, due_date, type, status, category, created_at, related_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (id) DO UPDATE SET description = $2, amount = $3, due_date = $4, type = $5, status = $6, category = $7
-      `, [acc.id, acc.description, acc.amount, acc.dueDate, acc.type, acc.status, acc.category, acc.createdAt, acc.relatedId || '']);
+      `, [acc.id, acc.description, Number(acc.amount), acc.dueDate, acc.type, acc.status, acc.category, acc.createdAt, acc.relatedId || '']);
     }
   },
 
@@ -276,12 +290,7 @@ export const db = {
     await dbInstance.sales.put(sale);
     if (isCloudEnabled()) {
       try {
-        await queryNeon(`INSERT INTO sales (id, customer_id, items, total, total_cost, payment_method, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [sale.id, sale.customerId || '', JSON.stringify(sale.items), sale.total, sale.totalCost || 0, sale.paymentMethod, sale.createdAt]);
-        const accId = 'FIN_' + sale.id;
-        await queryNeon(`
-          INSERT INTO financial_accounts (id, description, amount, due_date, type, status, category, created_at, related_id)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        `, [accId, `VENDA DIRETA #${sale.id.slice(-4).toUpperCase()}`, sale.total, sale.createdAt.split('T')[0], 'RECEBER', 'PAGO', 'Vendas Diretas', sale.createdAt, sale.id]);
+        await queryNeon(`INSERT INTO sales (id, customer_id, items, total, total_cost, payment_method, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [sale.id, sale.customerId || '', sale.items, Number(sale.total), Number(sale.totalCost || 0), sale.paymentMethod, sale.createdAt]);
       } catch (e) {}
     }
   },
@@ -302,7 +311,6 @@ export const db = {
     'Aguardando Análise': "Olá {{cliente}}, seu aparelho {{aparelho}} já está conosco para análise (O.S. #{{os}}). Logo entraremos em contato!",
     'Em Orçamento': "Olá {{cliente}}, o orçamento da sua O.S. #{{os}} ({{aparelho}}) está pronto! O valor total é R$ {{valor}}. Podemos prosseguir?",
     'Aprovado': "Olá {{cliente}}, o orçamento foi aprovado! Iniciaremos o reparo do seu {{aparelho}} em breve.",
-    // Fix: Changed duplicate property key from 'Em Orçamento' to 'Em Reparo'
     'Em Reparo': "Olá {{cliente}}, informamos que seu {{aparelho}} (O.S. #{{os}}) já está na bancada técnica para manutenção.",
     'Finalizado': "Olá {{cliente}}, boas notícias! O reparo do seu {{aparelho}} foi concluído. Você já pode vir buscá-lo!",
     'Entregue': "Olá {{cliente}}, seu aparelho {{aparelho}} foi entregue. Obrigado pela preferência!",
@@ -313,7 +321,6 @@ export const db = {
   saveCustomers: (data: any) => dbInstance.customers.clear().then(() => dbInstance.customers.bulkAdd(data)),
   saveProducts: (data: any) => dbInstance.products.clear().then(() => dbInstance.products.bulkAdd(data)),
   saveEquipment: (data: any) => dbInstance.equipment.clear().then(() => dbInstance.equipment.bulkAdd(data)),
-  // Fix: Added missing saveSuppliers method
   saveSuppliers: (data: any) => dbInstance.suppliers.clear().then(() => dbInstance.suppliers.bulkAdd(data)),
   deleteFinancialAccount: async (id: string) => {
     await dbInstance.financialAccounts.delete(id);
@@ -324,7 +331,7 @@ export const db = {
   getEquipment: async (): Promise<Equipment[]> => {
     if (isCloudEnabled()) {
       const rows = await queryNeon('SELECT * FROM equipment');
-      if (rows) return rows.map(r => ({ ...r, customerId: r.customer_id })) as unknown as Equipment[];
+      if (rows) return rows.map(r => ({ id: r.id, customerId: r.customer_id, type: r.type, brand: r.brand, model: r.model, serialNumber: r.serial_number })) as unknown as Equipment[];
     }
     return dbInstance.equipment.toArray();
   },
@@ -338,8 +345,10 @@ export const db = {
 
 async function getSetting(key: string, defaultValue: any) {
   if (isCloudEnabled()) {
-    const rows = await queryNeon('SELECT value FROM settings WHERE key = $1', [key]);
-    if (rows && rows.length > 0) return ensureObject(rows[0].value);
+    try {
+      const rows = await queryNeon('SELECT value FROM settings WHERE key = $1', [key]);
+      if (rows && rows.length > 0) return ensureObject(rows[0].value);
+    } catch (e) { return defaultValue; }
   }
   const item = await dbInstance.settings.get(key);
   return item ? item.value : defaultValue;
@@ -348,6 +357,8 @@ async function getSetting(key: string, defaultValue: any) {
 async function saveSetting(key: string, value: any) {
   await dbInstance.settings.put({ key, value });
   if (isCloudEnabled()) {
-    await queryNeon('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [key, JSON.stringify(value)]);
+    try {
+      await queryNeon('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [key, value]);
+    } catch (e) {}
   }
 }
