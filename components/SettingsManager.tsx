@@ -181,7 +181,7 @@ const SettingsManager: React.FC = () => {
                   <span className="text-[10px] font-black uppercase tracking-widest">Tags Inteligentes (Clique para copiar)</span>
                 </div>
                 <div className="flex flex-wrap gap-2 mb-6">
-                  {['{{cliente}}', '{{os}}', '{{aparelho}}', '{{status}}', '{{valor}}'].map(tag => (
+                  {['{{cliente}}', '{{os}}', '{{aparelho}}', '{{status}}', '{{valor}}', '{{ocorrencias}}'].map(tag => (
                     <button key={tag} onClick={() => { navigator.clipboard.writeText(tag); alert(`Tag ${tag} copiada!`); }} className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-[10px] font-mono font-black text-slate-600 hover:bg-emerald-600 hover:text-white transition-all shadow-sm">
                       {tag}
                     </button>

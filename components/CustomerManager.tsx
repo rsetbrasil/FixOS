@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit2, Trash2, UserCheck, X } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, UserCheck, X, MapPin, Loader2 } from 'lucide-react';
 import { db } from '../utils/storage';
 import { Customer } from '../types';
 
@@ -10,6 +10,7 @@ const CustomerManager: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Partial<Customer> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isCepLoading, setIsCepLoading] = useState(false);
 
   useEffect(() => {
     loadCustomers();
@@ -21,6 +22,27 @@ const CustomerManager: React.FC = () => {
     setLoading(false);
   };
 
+  const handleCepLookup = async (cep: string) => {
+    const cleanCep = cep.replace(/\D/g, '');
+    setEditingCustomer(prev => ({ ...prev, zipCode: cep }));
+
+    if (cleanCep.length === 8) {
+      setIsCepLoading(true);
+      try {
+        const response = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+        const data = await response.json();
+        if (!data.erro) {
+          const addressString = `${data.logradouro}, ${data.bairro}, ${data.localidade} - ${data.uf}`;
+          setEditingCustomer(prev => ({ ...prev, address: addressString }));
+        }
+      } catch (error) {
+        console.error("Erro ao buscar CEP:", error);
+      } finally {
+        setIsCepLoading(false);
+      }
+    }
+  };
+
   const handleSave = async () => {
     if (!editingCustomer?.name) return;
     const newCustomer = {
@@ -29,12 +51,14 @@ const CustomerManager: React.FC = () => {
       phone: editingCustomer.phone || '',
       email: editingCustomer.email || '',
       document: editingCustomer.document || '',
+      zipCode: editingCustomer.zipCode || '',
       address: editingCustomer.address || ''
     } as Customer;
 
     await db.updateCustomer(newCustomer);
     await loadCustomers();
     setIsModalOpen(false);
+    setEditingCustomer(null);
   };
 
   const handleDelete = async (id: string) => {
@@ -117,7 +141,7 @@ const CustomerManager: React.FC = () => {
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/80 flex items-center justify-center p-4 z-50 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-white rounded-[40px] p-10 w-full max-w-md shadow-2xl border border-white/20 animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-[40px] p-10 w-full max-w-md shadow-2xl border border-white/20 animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
             <div className="flex justify-between items-center mb-8 pb-4 border-b border-gray-50">
               <h3 className="text-2xl font-black text-gray-900 tracking-tight">{editingCustomer?.id ? 'Editar' : 'Novo'} Cliente</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-gray-300 hover:text-red-500 transition-all p-2 bg-gray-50 rounded-2xl"><X size={24} /></button>
@@ -131,13 +155,23 @@ const CustomerManager: React.FC = () => {
                   onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})}
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">WhatsApp</label>
-                <input 
-                  className="w-full border border-gray-200 p-3 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50/50"
-                  value={editingCustomer?.phone || ''}
-                  onChange={e => setEditingCustomer({...editingCustomer, phone: e.target.value})}
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">WhatsApp</label>
+                  <input 
+                    className="w-full border border-gray-200 p-3 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50/50"
+                    value={editingCustomer?.phone || ''}
+                    onChange={e => setEditingCustomer({...editingCustomer, phone: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Documento (CPF/CNPJ)</label>
+                  <input 
+                    className="w-full border border-gray-200 p-3 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50/50"
+                    value={editingCustomer?.document || ''}
+                    onChange={e => setEditingCustomer({...editingCustomer, document: e.target.value})}
+                  />
+                </div>
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Email</label>
@@ -146,6 +180,32 @@ const CustomerManager: React.FC = () => {
                   value={editingCustomer?.email || ''}
                   onChange={e => setEditingCustomer({...editingCustomer, email: e.target.value})}
                 />
+              </div>
+              
+              <div className="border-t border-gray-100 pt-4 mt-4">
+                <div className="space-y-1.5 relative">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1 flex items-center gap-2">
+                    <MapPin size={10} /> CEP (Busca Automática)
+                  </label>
+                  <div className="relative">
+                    <input 
+                      placeholder="00000-000"
+                      className="w-full border border-gray-200 p-3 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50/50"
+                      value={editingCustomer?.zipCode || ''}
+                      onChange={e => handleCepLookup(e.target.value)}
+                    />
+                    {isCepLoading && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 text-indigo-500 animate-spin" size={18} />}
+                  </div>
+                </div>
+                <div className="space-y-1.5 mt-4">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Endereço Completo</label>
+                  <textarea 
+                    rows={2}
+                    className="w-full border border-gray-200 p-3 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50/50 resize-none text-sm"
+                    value={editingCustomer?.address || ''}
+                    onChange={e => setEditingCustomer({...editingCustomer, address: e.target.value})}
+                  />
+                </div>
               </div>
             </div>
             <div className="flex justify-end gap-4 mt-10 pt-6 border-t border-gray-50">

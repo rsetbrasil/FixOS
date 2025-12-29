@@ -11,9 +11,9 @@ export enum OrderStatus {
 }
 
 export enum PaymentStatus {
-  PENDING = 'Pendente',
-  PARTIAL = 'Parcial',
-  PAID = 'Pago'
+  PENDENTE = 'Pendente',
+  PARCIAL = 'Parcial',
+  PAGO = 'Pago'
 }
 
 export interface BusinessInfo {
@@ -30,6 +30,7 @@ export interface Customer {
   phone: string;
   email: string;
   document: string;
+  zipCode?: string;
   address: string;
 }
 
