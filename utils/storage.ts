@@ -15,7 +15,7 @@ export class ServiceProDatabase extends Dexie {
 
   constructor() {
     super('ServiceProDB');
-    (this as any).version(5).stores({
+    (this as any).version(6).stores({
       customers: 'id, name, phone',
       products: 'id, name, category',
       suppliers: 'id, name',
@@ -46,13 +46,13 @@ const isCloudEnabled = () => {
 
 const queryNeon = async (sql: string, params: any[] = []) => {
   const url = getNeonUrl();
-  if (!url) throw new Error("Neon Connection String não configurada.");
+  if (!url) return null;
   try {
     const sqlClient = neon(url);
     return await (sqlClient as any)(sql, params);
   } catch (err: any) {
-    console.error("Erro na consulta Neon:", err);
-    throw err;
+    console.warn("Neon Cloud Error:", err.message);
+    return null;
   }
 };
 
@@ -80,20 +80,19 @@ export const db = {
     const commands = [
       `CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT, email TEXT, document TEXT, address TEXT)`,
       `CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, name TEXT NOT NULL, sku TEXT, price DECIMAL(12,2), cost DECIMAL(12,2), stock INT, category TEXT)`,
+      `CREATE TABLE IF NOT EXISTS suppliers (id TEXT PRIMARY KEY, name TEXT NOT NULL, contact TEXT, phone TEXT)`,
       `CREATE TABLE IF NOT EXISTS equipment (id TEXT PRIMARY KEY, customer_id TEXT, type TEXT, brand TEXT, model TEXT, serial_number TEXT)`,
       `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value JSONB)`,
       `CREATE TABLE IF NOT EXISTS sales (id TEXT PRIMARY KEY, customer_id TEXT, items JSONB, total DECIMAL(12,2), total_cost DECIMAL(12,2), payment_method TEXT, created_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS financial_accounts (id TEXT PRIMARY KEY, description TEXT, amount DECIMAL(12,2), due_date TEXT, type TEXT, status TEXT, category TEXT, created_at TEXT, related_id TEXT)`,
-      `CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, order_number INT, customer_id TEXT, equipment_id TEXT, status TEXT, problem_description TEXT, technical_report TEXT, accessories TEXT, checklist JSONB, checklist_observations TEXT, occurrences JSONB, items JSONB, labor_cost DECIMAL(12,2), labor_cost_base DECIMAL(12,2), diagnosis_fee DECIMAL(12,2), total DECIMAL(12,2), total_cost DECIMAL(12,2), warranty_days INT, warranty_expiry_date TEXT, created_at TEXT, updated_at TEXT, payment_status TEXT, history JSONB, payment_method TEXT)`,
-      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_cost DECIMAL(12,2)`,
-      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS labor_cost_base DECIMAL(12,2)`,
-      `ALTER TABLE sales ADD COLUMN IF NOT EXISTS total_cost DECIMAL(12,2)`,
-      `ALTER TABLE financial_accounts ADD COLUMN IF NOT EXISTS related_id TEXT`
+      `CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, order_number INT, customer_id TEXT, equipment_id TEXT, status TEXT, problem_description TEXT, technical_report TEXT, accessories TEXT, checklist JSONB, checklist_observations TEXT, occurrences JSONB, items JSONB, labor_cost DECIMAL(12,2), labor_cost_base DECIMAL(12,2), diagnosis_fee DECIMAL(12,2), total DECIMAL(12,2), total_cost DECIMAL(12,2), warranty_days INT, created_at TEXT, updated_at TEXT, payment_status TEXT, history JSONB, payment_method TEXT, photos JSONB, technician TEXT)`,
     ];
     
     if (isCloudEnabled()) {
       try {
         for (const sql of commands) { await queryNeon(sql); }
+        try { await queryNeon(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS photos JSONB`); } catch(e){}
+        try { await queryNeon(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS technician TEXT`); } catch(e){}
         return { success: true, msg: "Banco Cloud sincronizado!" };
       } catch (err: any) {
         return { success: false, msg: "Erro Cloud: " + err.message };
@@ -104,46 +103,53 @@ export const db = {
 
   getCustomers: async (): Promise<Customer[]> => {
     if (isCloudEnabled()) {
-      try {
-        const rows = await queryNeon('SELECT * FROM customers ORDER BY name ASC');
-        return rows as unknown as Customer[];
-      } catch { return dbInstance.customers.toArray(); }
+      const rows = await queryNeon('SELECT * FROM customers ORDER BY name ASC');
+      if (rows) return rows as unknown as Customer[];
     }
     return dbInstance.customers.toArray();
   },
 
   updateCustomer: async (customer: Customer) => {
+    await dbInstance.customers.put(customer);
     if (isCloudEnabled()) {
-      try {
-        await queryNeon(`INSERT INTO customers (id, name, phone, email, document, address) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET name = $2, phone = $3, email = $4, document = $5, address = $6`, [customer.id, customer.name, customer.phone, customer.email, customer.document, customer.address]);
-      } catch (e) {}
+      await queryNeon(`INSERT INTO customers (id, name, phone, email, document, address) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET name = $2, phone = $3, email = $4, document = $5, address = $6`, [customer.id, customer.name, customer.phone || '', customer.email || '', customer.document || '', customer.address || '']);
     }
-    return dbInstance.customers.put(customer);
+  },
+
+  getSuppliers: async (): Promise<Supplier[]> => {
+    if (isCloudEnabled()) {
+      const rows = await queryNeon('SELECT * FROM suppliers ORDER BY name ASC');
+      if (rows) return rows as unknown as Supplier[];
+    }
+    return dbInstance.suppliers.toArray();
+  },
+
+  updateSupplier: async (supplier: Supplier) => {
+    await dbInstance.suppliers.put(supplier);
+    if (isCloudEnabled()) {
+      await queryNeon(`INSERT INTO suppliers (id, name, contact, phone) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET name = $2, contact = $3, phone = $4`, [supplier.id, supplier.name, supplier.contact || '', supplier.phone || '']);
+    }
   },
 
   getProducts: async (): Promise<Product[]> => {
     if (isCloudEnabled()) {
-      try {
-        const rows = await queryNeon('SELECT * FROM products ORDER BY name ASC');
-        return rows.map(r => ({ ...r, price: Number(r.price), cost: Number(r.cost), stock: Number(r.stock) })) as unknown as Product[];
-      } catch { return dbInstance.products.toArray(); }
+      const rows = await queryNeon('SELECT * FROM products ORDER BY name ASC');
+      if (rows) return rows.map(r => ({ ...r, price: Number(r.price), cost: Number(r.cost), stock: Number(r.stock) })) as unknown as Product[];
     }
     return dbInstance.products.toArray();
   },
 
   updateProduct: async (product: Product) => {
+    await dbInstance.products.put(product);
     if (isCloudEnabled()) {
-      try {
-        await queryNeon(`INSERT INTO products (id, name, sku, price, cost, stock, category) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO UPDATE SET name = $2, sku = $3, price = $4, cost = $5, stock = $6, category = $7`, [product.id, product.name, product.sku, product.price, product.cost, product.stock, product.category]);
-      } catch (e) {}
+      await queryNeon(`INSERT INTO products (id, name, sku, price, cost, stock, category) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO UPDATE SET name = $2, sku = $3, price = $4, cost = $5, stock = $6, category = $7`, [product.id, product.name, product.sku || '', product.price, product.cost, product.stock, product.category]);
     }
-    return dbInstance.products.put(product);
   },
 
   getOrders: async (): Promise<ServiceOrder[]> => {
     if (isCloudEnabled()) {
-      try {
-        const rows = await queryNeon('SELECT * FROM orders ORDER BY order_number DESC');
+      const rows = await queryNeon('SELECT * FROM orders ORDER BY order_number DESC');
+      if (rows) {
         return rows.map(r => ({
           ...r,
           orderNumber: Number(r.order_number),
@@ -158,27 +164,76 @@ export const db = {
           total: Number(r.total),
           totalCost: Number(r.total_cost || 0),
           history: ensureArray(r.history),
+          photos: ensureArray(r.photos),
           createdAt: r.created_at,
-          updatedAt: r.updated_at
+          updatedAt: r.updated_at,
+          technician: r.technician || ''
         })) as unknown as ServiceOrder[];
-      } catch { return dbInstance.orders.toArray(); }
+      }
     }
     return dbInstance.orders.toArray();
   },
 
   updateOrder: async (order: ServiceOrder) => {
+    // Primeiro salva localmente (Mais rápido e garantido)
+    await dbInstance.orders.put(order);
+
     if (isCloudEnabled()) {
       try {
         await queryNeon(`
-          INSERT INTO orders (id, order_number, customer_id, equipment_id, status, problem_description, technical_report, accessories, checklist, checklist_observations, occurrences, items, labor_cost, labor_cost_base, diagnosis_fee, total, total_cost, warranty_days, created_at, updated_at, payment_status, history, payment_method)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
-          ON CONFLICT (id) DO UPDATE SET status = $5, problem_description = $6, technical_report = $7, accessories = $8, checklist = $9, checklist_observations = $10, occurrences = $11, items = $12, labor_cost = $13, labor_cost_base = $14, diagnosis_fee = $15, total = $16, total_cost = $17, updated_at = $20, payment_status = $21, history = $22, payment_method = $23
-        `, [order.id, order.orderNumber, order.customerId, order.equipmentId, order.status, order.problemDescription, order.technicalReport, order.accessories, JSON.stringify(order.checklist), order.checklistObservations, JSON.stringify(order.occurrences), JSON.stringify(order.items), order.laborCost, order.laborCostBase || 0, order.diagnosisFee, order.total, order.totalCost || 0, order.warrantyDays, order.createdAt, order.updatedAt, order.paymentStatus, JSON.stringify(order.history), order.paymentMethod]);
+          INSERT INTO orders (id, order_number, customer_id, equipment_id, status, problem_description, technical_report, accessories, checklist, checklist_observations, occurrences, items, labor_cost, labor_cost_base, diagnosis_fee, total, total_cost, warranty_days, created_at, updated_at, payment_status, history, payment_method, photos, technician)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+          ON CONFLICT (id) DO UPDATE SET 
+            status = $5, 
+            problem_description = $6, 
+            technical_report = $7, 
+            accessories = $8, 
+            checklist = $9, 
+            checklist_observations = $10, 
+            occurrences = $11, 
+            items = $12, 
+            labor_cost = $13, 
+            labor_cost_base = $14, 
+            diagnosis_fee = $15, 
+            total = $16, 
+            total_cost = $17, 
+            updated_at = $20, 
+            payment_status = $21, 
+            history = $22, 
+            payment_method = $23, 
+            photos = $24,
+            technician = $25
+        `, [
+          order.id, 
+          order.orderNumber, 
+          order.customerId, 
+          order.equipmentId, 
+          order.status, 
+          order.problemDescription || '', 
+          order.technicalReport || '', 
+          order.accessories || '', 
+          JSON.stringify(order.checklist || {}), 
+          order.checklistObservations || '', 
+          JSON.stringify(order.occurrences || []), 
+          JSON.stringify(order.items || []), 
+          order.laborCost || 0, 
+          order.laborCostBase || 0, 
+          order.diagnosisFee || 0, 
+          order.total || 0, 
+          order.totalCost || 0, 
+          order.warrantyDays || 90, 
+          order.createdAt, 
+          order.updatedAt, 
+          order.paymentStatus, 
+          JSON.stringify(order.history || []), 
+          order.paymentMethod || '', 
+          JSON.stringify(order.photos || []),
+          order.technician || ''
+        ]);
 
-        // Automação: Se for ENTREGUE, cria registro no financeiro se não existir
         if (order.status === OrderStatus.DELIVERED) {
           const accs = await queryNeon('SELECT id FROM financial_accounts WHERE related_id = $1', [order.id]);
-          if (accs.length === 0) {
+          if (accs && accs.length === 0) {
             const accId = 'FIN_' + order.id;
             await queryNeon(`
               INSERT INTO financial_accounts (id, description, amount, due_date, type, status, category, created_at, related_id)
@@ -186,49 +241,42 @@ export const db = {
             `, [accId, `RECEITA O.S. #${order.orderNumber}`, order.total, new Date().toISOString().split('T')[0], 'RECEBER', 'PAGO', 'Ordens de Serviço', new Date().toISOString(), order.id]);
           }
         }
-      } catch (e) { console.error("Erro updateOrder cloud:", e); }
+      } catch (e) { console.error("Cloud Sync Error (Order):", e); }
     }
-    return dbInstance.orders.put(order);
   },
 
   getFinancialAccounts: async (): Promise<FinancialAccount[]> => {
     if (isCloudEnabled()) {
-      try {
-        const rows = await queryNeon('SELECT * FROM financial_accounts ORDER BY due_date ASC');
-        return rows.map(r => ({ ...r, amount: Number(r.amount), relatedId: r.related_id })) as unknown as FinancialAccount[];
-      } catch { return []; }
+      const rows = await queryNeon('SELECT * FROM financial_accounts ORDER BY due_date ASC');
+      if (rows) return rows.map(r => ({ ...r, amount: Number(r.amount), relatedId: r.related_id })) as unknown as FinancialAccount[];
     }
     return dbInstance.financialAccounts.toArray();
   },
 
   updateFinancialAccount: async (acc: FinancialAccount) => {
+    await dbInstance.financialAccounts.put(acc);
     if (isCloudEnabled()) {
-      try {
-        await queryNeon(`
-          INSERT INTO financial_accounts (id, description, amount, due_date, type, status, category, created_at, related_id)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          ON CONFLICT (id) DO UPDATE SET description = $2, amount = $3, due_date = $4, type = $5, status = $6, category = $7
-        `, [acc.id, acc.description, acc.amount, acc.dueDate, acc.type, acc.status, acc.category, acc.createdAt, acc.relatedId]);
-      } catch (e) {}
+      await queryNeon(`
+        INSERT INTO financial_accounts (id, description, amount, due_date, type, status, category, created_at, related_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (id) DO UPDATE SET description = $2, amount = $3, due_date = $4, type = $5, status = $6, category = $7
+      `, [acc.id, acc.description, acc.amount, acc.dueDate, acc.type, acc.status, acc.category, acc.createdAt, acc.relatedId || '']);
     }
-    return dbInstance.financialAccounts.put(acc);
   },
 
   getSales: async () => {
     if (isCloudEnabled()) {
-      try {
-        const rows = await queryNeon('SELECT * FROM sales ORDER BY created_at DESC');
-        return rows.map(r => ({ ...r, items: ensureArray(r.items), total: Number(r.total), totalCost: Number(r.total_cost || 0) })) as unknown as Sale[];
-      } catch { return dbInstance.sales.toArray(); }
+      const rows = await queryNeon('SELECT * FROM sales ORDER BY created_at DESC');
+      if (rows) return rows.map(r => ({ ...r, items: ensureArray(r.items), total: Number(r.total), totalCost: Number(r.total_cost || 0) })) as unknown as Sale[];
     }
     return dbInstance.sales.toArray();
   },
 
   addSale: async (sale: Sale) => {
+    await dbInstance.sales.put(sale);
     if (isCloudEnabled()) {
       try {
-        await queryNeon(`INSERT INTO sales (id, customer_id, items, total, total_cost, payment_method, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [sale.id, sale.customerId, JSON.stringify(sale.items), sale.total, sale.totalCost || 0, sale.paymentMethod, sale.createdAt]);
-        // Automação: Gera registro financeiro imediato para venda direta
+        await queryNeon(`INSERT INTO sales (id, customer_id, items, total, total_cost, payment_method, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [sale.id, sale.customerId || '', JSON.stringify(sale.items), sale.total, sale.totalCost || 0, sale.paymentMethod, sale.createdAt]);
         const accId = 'FIN_' + sale.id;
         await queryNeon(`
           INSERT INTO financial_accounts (id, description, amount, due_date, type, status, category, created_at, related_id)
@@ -236,7 +284,6 @@ export const db = {
         `, [accId, `VENDA DIRETA #${sale.id.slice(-4).toUpperCase()}`, sale.total, sale.createdAt.split('T')[0], 'RECEBER', 'PAGO', 'Vendas Diretas', sale.createdAt, sale.id]);
       } catch (e) {}
     }
-    return dbInstance.sales.put(sale);
   },
 
   getBusinessInfo: () => getSetting('business_info', { name: 'FIXOS ASSISTÊNCIA', cnpj: '00.000.000/0001-00', phone: '(11) 99999-8493', address: 'Rua das Tecnologias, 101 - Centro' }),
@@ -251,51 +298,56 @@ export const db = {
   saveTermsExit: (data: string) => saveSetting('terms_exit', data),
   getDefaultWarranty: () => getSetting('default_warranty', 90),
   saveDefaultWarranty: (days: number) => saveSetting('default_warranty', days),
+  getStatusMessages: () => getSetting('status_messages', {
+    'Aguardando Análise': "Olá {{cliente}}, seu aparelho {{aparelho}} já está conosco para análise (O.S. #{{os}}). Logo entraremos em contato!",
+    'Em Orçamento': "Olá {{cliente}}, o orçamento da sua O.S. #{{os}} ({{aparelho}}) está pronto! O valor total é R$ {{valor}}. Podemos prosseguir?",
+    'Aprovado': "Olá {{cliente}}, o orçamento foi aprovado! Iniciaremos o reparo do seu {{aparelho}} em breve.",
+    // Fix: Changed duplicate property key from 'Em Orçamento' to 'Em Reparo'
+    'Em Reparo': "Olá {{cliente}}, informamos que seu {{aparelho}} (O.S. #{{os}}) já está na bancada técnica para manutenção.",
+    'Finalizado': "Olá {{cliente}}, boas notícias! O reparo do seu {{aparelho}} foi concluído. Você já pode vir buscá-lo!",
+    'Entregue': "Olá {{cliente}}, seu aparelho {{aparelho}} foi entregue. Obrigado pela preferência!",
+    'Cancelado': "Olá {{cliente}}, informamos que a O.S. #{{os}} foi cancelada conforme solicitado.",
+    'Garantia/Retorno': "Olá {{cliente}}, recebemos seu {{aparelho}} para verificação de garantia (O.S. #{{os}})."
+  }),
+  saveStatusMessages: (msgs: Record<string, string>) => saveSetting('status_messages', msgs),
   saveCustomers: (data: any) => dbInstance.customers.clear().then(() => dbInstance.customers.bulkAdd(data)),
   saveProducts: (data: any) => dbInstance.products.clear().then(() => dbInstance.products.bulkAdd(data)),
   saveEquipment: (data: any) => dbInstance.equipment.clear().then(() => dbInstance.equipment.bulkAdd(data)),
-  syncLocalToCloud: async () => {},
+  // Fix: Added missing saveSuppliers method
+  saveSuppliers: (data: any) => dbInstance.suppliers.clear().then(() => dbInstance.suppliers.bulkAdd(data)),
   deleteFinancialAccount: async (id: string) => {
+    await dbInstance.financialAccounts.delete(id);
     if (isCloudEnabled()) {
       try { await queryNeon('DELETE FROM financial_accounts WHERE id = $1', [id]); } catch (e) {}
     }
-    return dbInstance.financialAccounts.delete(id);
   },
   getEquipment: async (): Promise<Equipment[]> => {
     if (isCloudEnabled()) {
-      try {
-        const rows = await queryNeon('SELECT * FROM equipment');
-        return rows as unknown as Equipment[];
-      } catch { return dbInstance.equipment.toArray(); }
+      const rows = await queryNeon('SELECT * FROM equipment');
+      if (rows) return rows.map(r => ({ ...r, customerId: r.customer_id })) as unknown as Equipment[];
     }
     return dbInstance.equipment.toArray();
   },
   addEquipment: async (eq: Equipment) => {
+    await dbInstance.equipment.put(eq);
     if (isCloudEnabled()) {
-      try {
-        await queryNeon(`INSERT INTO equipment (id, customer_id, type, brand, model, serial_number) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET customer_id = $2, type = $3, brand = $4, model = $5, serial_number = $6`, [eq.id, eq.customerId, eq.type, eq.brand, eq.model, eq.serialNumber]);
-      } catch (e) {}
+      await queryNeon(`INSERT INTO equipment (id, customer_id, type, brand, model, serial_number) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET customer_id = $2, type = $3, brand = $4, model = $5, serial_number = $6`, [eq.id, eq.customerId, eq.type || '', eq.brand || '', eq.model || '', eq.serialNumber || '']);
     }
-    return dbInstance.equipment.put(eq);
   }
 };
 
 async function getSetting(key: string, defaultValue: any) {
   if (isCloudEnabled()) {
-    try {
-      const rows = await queryNeon('SELECT value FROM settings WHERE key = $1', [key]);
-      if (rows.length > 0) return ensureObject(rows[0].value);
-    } catch { return defaultValue; }
+    const rows = await queryNeon('SELECT value FROM settings WHERE key = $1', [key]);
+    if (rows && rows.length > 0) return ensureObject(rows[0].value);
   }
   const item = await dbInstance.settings.get(key);
   return item ? item.value : defaultValue;
 }
 
 async function saveSetting(key: string, value: any) {
-  if (isCloudEnabled()) {
-    try {
-      await queryNeon('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [key, JSON.stringify(value)]);
-    } catch (e) {}
-  }
   await dbInstance.settings.put({ key, value });
+  if (isCloudEnabled()) {
+    await queryNeon('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [key, JSON.stringify(value)]);
+  }
 }

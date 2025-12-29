@@ -108,6 +108,7 @@ export interface ServiceOrder {
   accessories: string;
   checklist: Record<string, boolean>;
   checklistObservations?: string;
+  photos?: string[]; // Array de strings base64
   items: Array<{
     productId: string;
     quantity: number;

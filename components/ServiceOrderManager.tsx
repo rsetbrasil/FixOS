@@ -6,11 +6,13 @@ import {
   MessageSquare, CheckCircle, Send, UserPlus,
   Trash, Zap, DollarSign, Check, MessageCircle, Download, FileText,
   PackagePlus, CreditCard, Banknote, QrCode, Wrench, Package,
-  AlertCircle, TrendingDown
+  AlertCircle, TrendingDown, Camera, Image as ImageIcon, RefreshCcw
 } from 'lucide-react';
 import { db } from '../utils/storage';
 import { OrderStatus, PaymentStatus, ServiceOrder, Customer, Equipment, Product, Occurrence, BusinessInfo } from '../types';
 import { STATUS_COLORS } from '../constants';
+// Import Gemini service for technical report suggestions
+import { generateTechnicalReport } from '../services/gemini';
 
 const ServiceOrderManager: React.FC = () => {
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
@@ -29,8 +31,9 @@ const ServiceOrderManager: React.FC = () => {
   const [addingType, setAddingType] = useState<'peça' | 'serviço'>('peça');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [tempPaymentMethod, setTempPaymentMethod] = useState<string>('Dinheiro');
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
-  const printFrameRef = useRef<HTMLIFrameElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { loadAllData(); }, []);
 
@@ -53,11 +56,11 @@ const ServiceOrderManager: React.FC = () => {
   };
 
   const calculateTotals = () => {
-    const itemsRevenue = (currentOrder.items || []).reduce((acc, item) => acc + (item.priceAtTime * item.quantity), 0);
-    const itemsCost = (currentOrder.items || []).reduce((acc, item) => acc + (item.costAtTime * item.quantity), 0);
-    const laborRevenue = currentOrder.laborCost || 0;
-    const laborCost = currentOrder.laborCostBase || 0; 
-    const diagFee = currentOrder.diagnosisFee || 0;
+    const itemsRevenue = (currentOrder.items || []).reduce((acc, item) => acc + (Number(item.priceAtTime) * Number(item.quantity)), 0);
+    const itemsCost = (currentOrder.items || []).reduce((acc, item) => acc + (Number(item.costAtTime) * Number(item.quantity)), 0);
+    const laborRevenue = Number(currentOrder.laborCost) || 0;
+    const laborCost = Number(currentOrder.laborCostBase) || 0; 
+    const diagFee = Number(currentOrder.diagnosisFee) || 0;
 
     return {
       revenue: itemsRevenue + laborRevenue + diagFee,
@@ -69,8 +72,8 @@ const ServiceOrderManager: React.FC = () => {
     const newItem = {
       productId: p.id,
       quantity: 1,
-      priceAtTime: p.price,
-      costAtTime: p.cost
+      priceAtTime: Number(p.price),
+      costAtTime: Number(p.cost)
     };
     setCurrentOrder(prev => ({
       ...prev,
@@ -84,6 +87,64 @@ const ServiceOrderManager: React.FC = () => {
       ...prev,
       items: (prev.items || []).filter((_, i) => i !== idx)
     }));
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file: File) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        setCurrentOrder(prev => ({
+          ...prev,
+          photos: [...(prev.photos || []), base64String]
+        }));
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleRemovePhoto = (idx: number) => {
+    setCurrentOrder(prev => ({
+      ...prev,
+      photos: (prev.photos || []).filter((_, i) => i !== idx)
+    }));
+  };
+
+  const handleGenerateAIReport = async () => {
+    if (!currentOrder.problemDescription) return alert("Descreva o problema primeiro para que a IA possa analisar.");
+    setIsGeneratingReport(true);
+    try {
+      const suggestion = await generateTechnicalReport(currentOrder.problemDescription);
+      setCurrentOrder(prev => ({ ...prev, technicalReport: suggestion }));
+    } catch (error) {
+      console.error("Erro ao gerar laudo:", error);
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
+  const handleSendWhatsApp = async (order: ServiceOrder) => {
+    const cust = customers.find(c => c.id === order.customerId);
+    const eq = equipment.find(e => e.id === order.equipmentId);
+    if (!cust || !cust.phone) return alert("Cliente sem telefone cadastrado.");
+
+    const msgs = await db.getStatusMessages();
+    let template = msgs[order.status] || `Olá, informamos que sua O.S. #${order.orderNumber} mudou para o status: ${order.status}`;
+
+    // Processamento de Tags
+    const message = template
+      .replace(/{{cliente}}/g, cust.name)
+      .replace(/{{os}}/g, order.orderNumber.toString())
+      .replace(/{{aparelho}}/g, `${eq?.brand} ${eq?.model}`)
+      .replace(/{{status}}/g, order.status)
+      .replace(/{{valor}}/g, order.total.toFixed(2));
+
+    const encodedMsg = encodeURIComponent(message);
+    const phone = cust.phone.replace(/\D/g, '');
+    window.open(`https://api.whatsapp.com/send?phone=55${phone}&text=${encodedMsg}`, '_blank');
   };
 
   const handleSave = async (isClosing?: boolean, paymentMethod?: string) => {
@@ -101,11 +162,12 @@ const ServiceOrderManager: React.FC = () => {
       paymentStatus = PaymentStatus.PAID; 
     }
     
+    // Objeto consolidado para salvamento
     const orderToSave = {
       ...currentOrder,
       status,
       paymentStatus,
-      paymentMethod: paymentMethod || currentOrder.paymentMethod,
+      paymentMethod: paymentMethod || currentOrder.paymentMethod || '',
       id: currentOrder.id || Math.random().toString(36).substr(2, 9),
       orderNumber: currentOrder.orderNumber || (maxOrderNumber + 1),
       createdAt: currentOrder.createdAt || new Date().toISOString(),
@@ -113,6 +175,11 @@ const ServiceOrderManager: React.FC = () => {
       total: totals.revenue,
       totalCost: totals.cost,
       items: currentOrder.items || [],
+      photos: currentOrder.photos || [],
+      laborCost: Number(currentOrder.laborCost) || 0,
+      laborCostBase: Number(currentOrder.laborCostBase) || 0,
+      diagnosisFee: Number(currentOrder.diagnosisFee) || 0,
+      technician: currentOrder.technician || '',
       history: [...(currentOrder.history || []), { 
         status, 
         timestamp: new Date().toISOString(), 
@@ -120,22 +187,25 @@ const ServiceOrderManager: React.FC = () => {
       }]
     } as ServiceOrder;
 
-    await db.updateOrder(orderToSave);
-    await loadAllData();
-    setIsModalOpen(false);
-    setIsPaymentModalOpen(false);
-    alert(isClosing ? "O.S. faturada com sucesso!" : "Alterações salvas.");
+    try {
+      await db.updateOrder(orderToSave);
+      await loadAllData();
+      setIsModalOpen(false);
+      setIsPaymentModalOpen(false);
+      alert(isClosing ? "O.S. faturada com sucesso!" : "Alterações salvas.");
+    } catch (err) {
+      console.error("Erro ao salvar O.S.:", err);
+      alert("Erro ao salvar as informações. Verifique sua conexão.");
+    }
   };
 
   const handlePrintOS = async (order: Partial<ServiceOrder>) => {
     if (!order.id) return;
     
-    // Pegar dados sincronizados no momento do clique
     const cust = customers.find(c => c.id === order.customerId);
     const eq = equipment.find(e => e.id === order.equipmentId);
     const biz = businessInfo || { name: 'FIXOS ASSISTÊNCIA', cnpj: '00.000.000/0001-00', phone: '(11) 99999-8493', address: 'Rua das Tecnologias, 101' };
     
-    // Obter termos (tratando erro se o banco falhar)
     let terms = "Garantia de 90 dias conforme CDC.";
     try {
         terms = order.status === OrderStatus.DELIVERED ? await db.getTermsExit() : await db.getTermsEntry();
@@ -146,60 +216,86 @@ const ServiceOrderManager: React.FC = () => {
       return `<tr><td>${p?.name || 'Item'}</td><td style="text-align: center;">${item.quantity}</td><td style="text-align: right;">R$ ${item.priceAtTime.toFixed(2)}</td><td style="text-align: right;">R$ ${(item.quantity * item.priceAtTime).toFixed(2)}</td></tr>`;
     }).join('');
 
+    const photosHtml = (order.photos || []).map(p => `<img src="${p}" style="width: 100px; height: 100px; object-fit: cover; margin: 3px; border-radius: 6px; border: 1px solid #e2e8f0;" />`).join('');
+
     const content = `
       <html>
         <head>
           <title>Impressão O.S. #${order.orderNumber}</title>
           <style>
-            body { font-family: 'Inter', sans-serif; padding: 25px; color: #1e293b; line-height: 1.5; font-size: 11px; }
-            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 15px; }
-            .biz-info h1 { margin: 0; font-size: 20px; font-weight: 900; }
+            @page { size: A4; margin: 0; }
+            body { font-family: 'Inter', sans-serif; padding: 15px; color: #1e293b; line-height: 1.2; font-size: 10px; margin: 0; background: #fff; }
+            .header { display: flex; justify-content: space-between; border-bottom: 1.5px solid #000; padding-bottom: 10px; margin-bottom: 8px; }
+            .biz-info h1 { margin: 0; font-size: 16px; font-weight: 900; }
+            .biz-info p { margin: 2px 0; font-size: 9px; color: #475569; }
             .os-badge { text-align: right; }
-            .os-number { font-size: 24px; font-weight: 900; margin: 0; color: #000; }
-            .section { margin-bottom: 12px; border: 1px solid #e2e8f0; padding: 10px; border-radius: 8px; }
-            .section-title { font-weight: 900; text-transform: uppercase; font-size: 8px; color: #64748b; margin-bottom: 5px; border-bottom: 1px solid #f1f5f9; }
-            .grid { display: grid; grid-template-cols: 1fr 1fr; gap: 10px; }
-            table { width: 100%; border-collapse: collapse; margin: 5px 0; }
-            th { background: #f8fafc; text-align: left; padding: 6px; font-size: 8px; text-transform: uppercase; border: 1px solid #e2e8f0; }
-            td { padding: 6px; border: 1px solid #e2e8f0; }
-            .totals { text-align: right; margin-top: 10px; }
-            .total-line { font-size: 14px; font-weight: 900; color: #000; }
-            .signature { margin-top: 40px; display: flex; justify-content: space-around; }
-            .sig-box { border-top: 1px solid #000; width: 180px; text-align: center; padding-top: 5px; font-weight: bold; }
-            @media print { body { padding: 0; } .header { border-bottom-color: #000; } }
+            .os-number { font-size: 18px; font-weight: 900; margin: 0; color: #000; }
+            .section { margin-bottom: 6px; border: 1px solid #e2e8f0; padding: 8px; border-radius: 6px; page-break-inside: avoid; }
+            .section-title { font-weight: 900; text-transform: uppercase; font-size: 7px; color: #64748b; margin-bottom: 4px; border-bottom: 1px solid #f1f5f9; padding-bottom: 2px; }
+            .grid { display: grid; grid-template-cols: 1fr 1fr; gap: 8px; }
+            table { width: 100%; border-collapse: collapse; margin: 4px 0; }
+            th { background: #f8fafc; text-align: left; padding: 4px; font-size: 7px; text-transform: uppercase; border: 1px solid #e2e8f0; }
+            td { padding: 4px; border: 1px solid #e2e8f0; font-size: 9px; }
+            .totals { text-align: right; margin-top: 5px; }
+            .total-line { font-size: 12px; font-weight: 900; color: #000; margin: 0; }
+            .signature { margin-top: 20px; display: flex; justify-content: space-around; gap: 20px; }
+            .sig-box { border-top: 1px solid #000; width: 180px; text-align: center; padding-top: 4px; }
+            .sig-label { font-weight: 900; text-transform: uppercase; font-size: 8px; display: block; }
+            .sig-name { font-size: 8px; color: #64748b; margin-top: 1px; display: block; }
+            .photos-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+            p { margin: 3px 0; }
           </style>
         </head>
         <body>
           <div class="header">
-            <div class="biz-info"><h1>${biz.name}</h1><p>${biz.cnpj}<br>${biz.address}<br>Whats: ${biz.phone}</p></div>
-            <div class="os-badge"><p class="os-number">O.S. #${order.orderNumber}</p><p>Data: ${new Date(order.createdAt || '').toLocaleDateString('pt-BR')}<br>Status: <strong>${order.status}</strong></p></div>
+            <div class="biz-info"><h1>${biz.name}</h1><p>${biz.cnpj} | ${biz.address}<br>Whats: ${biz.phone}</p></div>
+            <div class="os-badge"><p class="os-number">O.S. #${order.orderNumber}</p><p>Data: ${new Date(order.createdAt || '').toLocaleDateString('pt-BR')} | Status: <strong>${order.status}</strong></p></div>
           </div>
           <div class="grid">
-            <div class="section"><div class="section-title">Cliente</div><strong>${cust?.name || 'Não informado'}</strong><br>Doc: ${cust?.document || '---'}<br>Tel: ${cust?.phone || '---'}</div>
-            <div class="section"><div class="section-title">Equipamento</div><strong>${eq?.brand} ${eq?.model}</strong><br>Série: ${eq?.serialNumber || '---'}<br>Tipo: ${eq?.type || 'Aparelho'}</div>
+            <div class="section"><div class="section-title">Cliente</div><strong>${cust?.name || 'Não informado'}</strong><br>Doc: ${cust?.document || '---'} | Tel: ${cust?.phone || '---'}</div>
+            <div class="section"><div class="section-title">Equipamento</div><strong>${eq?.brand} ${eq?.model}</strong><br>Série: ${eq?.serialNumber || '---'} | Tipo: ${eq?.type || 'Aparelho'}</div>
           </div>
-          <div class="section"><div class="section-title">Observações Técnicas</div><p style="margin:0">${order.problemDescription || 'Nenhuma observação.'}</p></div>
+          <div class="grid">
+             <div class="section"><div class="section-title">Relato do Problema</div><p style="margin:0; font-size: 9px;">${order.problemDescription || 'Nenhuma observação.'}</p></div>
+             <div class="section"><div class="section-title">Laudo de Execução</div><p style="margin:0; font-size: 9px;">${order.technicalReport || 'Sem laudo técnico registrado.'}</p></div>
+          </div>
           <div class="section">
             <div class="section-title">Peças e Serviços</div>
-            <table><thead><tr><th>Descrição</th><th style="text-align: center;">Qtd</th><th style="text-align: right;">Unit.</th><th style="text-align: right;">Subtotal</th></tr></thead><tbody>${itemsHtml || '<tr><td colspan="4" style="text-align:center;">Sem itens</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Descrição</th><th style="text-align: center; width: 30px;">Qtd</th><th style="text-align: right; width: 60px;">Unit.</th><th style="text-align: right; width: 60px;">Subtotal</th></tr></thead><tbody>${itemsHtml || '<tr><td colspan="4" style="text-align:center;">Sem itens</td></tr>'}</tbody></table>
             <div class="totals">
-              <p style="margin:2px">M.O.: R$ ${(order.laborCost || 0).toFixed(2)} | Diag.: R$ ${(order.diagnosisFee || 0).toFixed(2)}</p>
+              <p style="margin:0; font-size: 8px;">M.O.: R$ ${(order.laborCost || 0).toFixed(2)} | Diag.: R$ ${(order.diagnosisFee || 0).toFixed(2)}</p>
               <p class="total-line">VALOR TOTAL: R$ ${(order.total || 0).toFixed(2)}</p>
             </div>
           </div>
-          <div class="section"><div class="section-title">Termos</div><div style="font-size: 8px; white-space: pre-wrap;">${terms}</div></div>
-          <div class="signature"><div class="sig-box">Assinatura do Cliente</div><div class="sig-box">Responsável Técnico</div></div>
+          
+          ${order.photos && order.photos.length > 0 ? `
+            <div class="section">
+              <div class="section-title">Anexos Fotográficos</div>
+              <div class="photos-container">${photosHtml}</div>
+            </div>
+          ` : ''}
+
+          <div class="section"><div class="section-title">Termos e Condições</div><div style="font-size: 7px; white-space: pre-wrap; color: #64748b;">${terms}</div></div>
+          
+          <div class="signature">
+            <div class="sig-box">
+              <span class="sig-label">Assinatura do Cliente</span>
+              <span class="sig-name">${cust?.name || ''}</span>
+            </div>
+            <div class="sig-box">
+              <span class="sig-label">Responsável Técnico</span>
+              <span class="sig-name">${order.technician || biz.name}</span>
+            </div>
+          </div>
         </body>
       </html>
     `;
 
-    // Metodo de Impressão via Window Temporária (Mais robusto para preview/modais)
     const win = window.open('', '_blank', 'width=800,height=900');
     if (win) {
       win.document.write(content);
       win.document.close();
       win.focus();
-      // Pequeno delay para garantir renderização das fontes/estilos
       setTimeout(() => {
         win.print();
         win.close();
@@ -215,7 +311,7 @@ const ServiceOrderManager: React.FC = () => {
   return (
     <div className="space-y-4 animate-in fade-in duration-500">
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap gap-3 items-center">
-        <button onClick={() => { setCurrentOrder({ status: OrderStatus.ENTRY, laborCost: 0, diagnosisFee: 0, laborCostBase: 0, items: [], checklist: {}, occurrences: [] }); setIsViewMode(false); setIsModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-black text-xs flex items-center gap-2 uppercase tracking-widest shadow-lg active:scale-95 transition-all">
+        <button onClick={() => { setCurrentOrder({ status: OrderStatus.ENTRY, laborCost: 0, diagnosisFee: 0, laborCostBase: 0, items: [], checklist: {}, occurrences: [], photos: [], problemDescription: '', technicalReport: '', technician: '' }); setIsViewMode(false); setIsModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-black text-xs flex items-center gap-2 uppercase tracking-widest shadow-lg active:scale-95 transition-all">
           <Plus size={18} /> Nova O.S.
         </button>
         <div className="relative flex-1 min-w-[200px]">
@@ -259,7 +355,7 @@ const ServiceOrderManager: React.FC = () => {
                       <button onClick={() => { setCurrentOrder(order); setIsViewMode(true); setIsModalOpen(true); }} className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-indigo-600 transition-colors" title="Visualizar"><Eye size={14}/></button>
                       <button onClick={() => { setCurrentOrder(order); setIsViewMode(false); setIsModalOpen(true); }} className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors" title="Editar"><Edit2 size={14}/></button>
                       <button onClick={() => handlePrintOS(order)} className="p-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors" title="Imprimir"><Printer size={14}/></button>
-                      <button onClick={() => { const c = customers.find(cust => cust.id === order.customerId); if(c?.phone) window.open(`https://api.whatsapp.com/send?phone=55${c.phone.replace(/\D/g, '')}`, '_blank'); }} className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors" title="WhatsApp"><MessageCircle size={14}/></button>
+                      <button onClick={() => handleSendWhatsApp(order as ServiceOrder)} className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors" title="WhatsApp Status"><MessageCircle size={14}/></button>
                     </div>
                   </td>
                 </tr>
@@ -279,7 +375,6 @@ const ServiceOrderManager: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-                {/* Lado Esquerdo - Cadastro e Itens */}
                 <div className="lg:col-span-8 space-y-8">
                   <div className="grid grid-cols-2 gap-6">
                     <div>
@@ -339,13 +434,76 @@ const ServiceOrderManager: React.FC = () => {
                     </div>
                   </div>
 
-                  <div>
-                     <label className="text-[10px] font-black uppercase text-slate-400 block mb-2 px-1 tracking-widest">Relato do Problema / Observações</label>
-                     <textarea disabled={isViewMode} className="w-full bg-slate-50 border border-slate-200 p-6 rounded-[24px] text-sm font-bold h-32 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner" placeholder="Descreva o problema aqui..." value={currentOrder.problemDescription || ''} onChange={e => setCurrentOrder({...currentOrder, problemDescription: e.target.value})} />
+                  <div className="bg-white p-8 rounded-[32px] border border-slate-200">
+                    <div className="flex justify-between items-center mb-6">
+                      <label className="text-[10px] font-black uppercase text-slate-400 block tracking-widest">Evidências Fotográficas</label>
+                      {!isViewMode && (
+                        <button 
+                          onClick={() => fileInputRef.current?.click()} 
+                          className="flex items-center gap-2 text-[10px] font-black text-blue-600 bg-white border border-blue-100 px-4 py-2 rounded-xl uppercase tracking-widest shadow-sm hover:shadow-md transition-all"
+                        >
+                          <Camera size={14}/> Adicionar Fotos
+                        </button>
+                      )}
+                      <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        className="hidden" 
+                        accept="image/*" 
+                        multiple 
+                        capture="environment"
+                        onChange={handleFileUpload} 
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4">
+                      {(currentOrder.photos || []).map((photo, idx) => (
+                        <div key={idx} className="relative group aspect-square rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-sm">
+                          <img src={photo} alt={`O.S. Photo ${idx}`} className="w-full h-full object-cover" />
+                          {!isViewMode && (
+                            <button 
+                              onClick={() => handleRemovePhoto(idx)} 
+                              className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                            >
+                              <Trash2 size={12}/>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {!isViewMode && (currentOrder.photos?.length === 0) && (
+                        <div className="col-span-full py-8 text-center border-2 border-dashed border-slate-200 rounded-3xl">
+                           <ImageIcon size={32} className="mx-auto text-slate-300 mb-2"/>
+                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nenhuma foto anexada</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 block mb-2 px-1 tracking-widest">Relato do Defeito</label>
+                      <textarea disabled={isViewMode} className="w-full bg-slate-50 border border-slate-200 p-6 rounded-[24px] text-sm font-bold h-24 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner" placeholder="O que o cliente relatou..." value={currentOrder.problemDescription || ''} onChange={e => setCurrentOrder({...currentOrder, problemDescription: e.target.value})} />
+                    </div>
+                    
+                    <div>
+                      <div className="flex justify-between items-center mb-2 px-1">
+                        <label className="text-[10px] font-black uppercase text-slate-400 block tracking-widest">Laudo Técnico (Reparo Executado)</label>
+                        {!isViewMode && (
+                          <button 
+                            onClick={handleGenerateAIReport}
+                            disabled={isGeneratingReport}
+                            className="text-[10px] font-black text-indigo-600 flex items-center gap-1 hover:underline disabled:opacity-50"
+                          >
+                            {isGeneratingReport ? <RefreshCcw size={10} className="animate-spin" /> : <Zap size={10} />} 
+                            Gerar com Gemini IA
+                          </button>
+                        )}
+                      </div>
+                      <textarea disabled={isViewMode} className="w-full bg-slate-50 border border-slate-200 p-6 rounded-[24px] text-sm font-bold h-32 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner" placeholder="Descreva os procedimentos técnicos..." value={currentOrder.technicalReport || ''} onChange={e => setCurrentOrder({...currentOrder, technicalReport: e.target.value})} />
+                    </div>
                   </div>
                 </div>
 
-                {/* Sidebar Direita - Status e Financeiro */}
                 <div className="lg:col-span-4 space-y-6">
                   <div className="bg-indigo-50/50 p-6 rounded-[24px] border border-indigo-100">
                     <label className="text-[10px] font-black uppercase text-indigo-400 block mb-2 px-1 tracking-widest">Status Atual</label>
@@ -365,14 +523,14 @@ const ServiceOrderManager: React.FC = () => {
                         <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mão de Obra</span>
                         <div className="flex items-center bg-slate-800 rounded-xl px-3 border border-slate-700">
                           <span className="text-slate-500 text-[9px] font-bold mr-1">R$</span>
-                          <input disabled={isViewMode} type="number" className="w-20 p-2 bg-transparent text-right font-black outline-none text-white text-xs" value={currentOrder.laborCost || 0} onChange={e => setCurrentOrder({...currentOrder, laborCost: Number(e.target.value)})} />
+                          <input disabled={isViewMode} type="number" step="0.01" className="w-20 p-2 bg-transparent text-right font-black outline-none text-white text-xs" value={currentOrder.laborCost || 0} onChange={e => setCurrentOrder({...currentOrder, laborCost: parseFloat(e.target.value) || 0})} />
                         </div>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Taxa Diag.</span>
                         <div className="flex items-center bg-slate-800 rounded-xl px-3 border border-slate-700">
                           <span className="text-slate-500 text-[9px] font-bold mr-1">R$</span>
-                          <input disabled={isViewMode} type="number" className="w-20 p-2 bg-transparent text-right font-black outline-none text-white text-xs" value={currentOrder.diagnosisFee || 0} onChange={e => setCurrentOrder({...currentOrder, diagnosisFee: Number(e.target.value)})} />
+                          <input disabled={isViewMode} type="number" step="0.01" className="w-20 p-2 bg-transparent text-right font-black outline-none text-white text-xs" value={currentOrder.diagnosisFee || 0} onChange={e => setCurrentOrder({...currentOrder, diagnosisFee: parseFloat(e.target.value) || 0})} />
                         </div>
                       </div>
                     </div>
@@ -392,7 +550,7 @@ const ServiceOrderManager: React.FC = () => {
                     </div>
                     <div>
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Dias de Garantia</label>
-                      <input disabled={isViewMode} type="number" className="w-full bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500" value={currentOrder.warrantyDays || 90} onChange={e => setCurrentOrder({...currentOrder, warrantyDays: Number(e.target.value)})} />
+                      <input disabled={isViewMode} type="number" className="w-full bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500" value={currentOrder.warrantyDays || 90} onChange={e => setCurrentOrder({...currentOrder, warrantyDays: parseInt(e.target.value) || 0})} />
                     </div>
                   </div>
                 </div>
@@ -401,6 +559,9 @@ const ServiceOrderManager: React.FC = () => {
               <div className="mt-10 flex justify-end gap-3 pt-8 border-t border-slate-100">
                 <button onClick={() => handlePrintOS(currentOrder)} className="flex items-center gap-2 bg-slate-800 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 hover:bg-slate-900 transition-all shadow-lg">
                   <Printer size={18}/> Imprimir Relatório
+                </button>
+                <button onClick={() => handleSendWhatsApp(currentOrder as ServiceOrder)} className="flex items-center gap-2 bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 hover:bg-emerald-700 transition-all shadow-lg">
+                  <MessageCircle size={18}/> Enviar Status WhatsApp
                 </button>
                 {!isViewMode ? (
                   <>
@@ -413,7 +574,6 @@ const ServiceOrderManager: React.FC = () => {
               </div>
             </div>
 
-            {/* Sub-modal de Faturamento */}
             {isPaymentModalOpen && (
               <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center p-6 z-[100] rounded-[40px]">
                 <div className="bg-white rounded-[32px] p-10 w-full max-w-sm shadow-2xl text-center border border-slate-100 animate-in zoom-in-95">
@@ -433,7 +593,6 @@ const ServiceOrderManager: React.FC = () => {
               </div>
             )}
 
-            {/* Seleção de Peças/Serviços */}
             {isAddingItem && (
               <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-6 z-[90] rounded-[40px]">
                 <div className="bg-white rounded-[32px] p-8 w-full max-w-md shadow-2xl border border-slate-100">

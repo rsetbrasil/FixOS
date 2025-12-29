@@ -5,15 +5,19 @@ import {
   PieChart, Pie
 } from 'recharts';
 import { 
-  Activity, Calendar, ArrowUpRight, Folder, LayoutGrid, Zap, TrendingUp
+  Activity, Calendar, ArrowUpRight, Folder, LayoutGrid, Zap, TrendingUp, Sparkles, RefreshCcw
 } from 'lucide-react';
 import { db } from '../utils/storage';
 import { ServiceOrder, Sale, OrderStatus } from '../types';
+// Import Gemini insights service
+import { getBusinessInsights } from '../services/gemini';
 
 const Dashboard: React.FC = () => {
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
+  const [aiInsights, setAiInsights] = useState<string | null>(null);
+  const [isGeneratingInsights, setIsGeneratingInsights] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -29,11 +33,30 @@ const Dashboard: React.FC = () => {
     loadData();
   }, []);
 
-  if (loading) return <div className="p-20 text-center font-black text-blue-600 animate-pulse uppercase tracking-[0.3em]">Carregando Painel...</div>;
-
   const osRevenue = orders.reduce((acc, o) => acc + o.total, 0);
   const salesRevenue = sales.reduce((acc, s) => acc + s.total, 0);
   const totalRevenue = osRevenue + salesRevenue;
+
+  const handleGenerateInsights = async () => {
+    setIsGeneratingInsights(true);
+    const stats = {
+      totalRevenue,
+      osCount: orders.length,
+      salesCount: sales.length,
+      averageTicket: totalRevenue / (orders.length + sales.length || 1),
+      pendingOrders: orders.filter(o => o.status === OrderStatus.ENTRY || o.status === OrderStatus.BUDGET).length
+    };
+    try {
+      const insights = await getBusinessInsights(stats);
+      setAiInsights(insights);
+    } catch (err) {
+      console.error("Erro AI Insights:", err);
+    } finally {
+      setIsGeneratingInsights(false);
+    }
+  };
+
+  if (loading) return <div className="p-20 text-center font-black text-blue-600 animate-pulse uppercase tracking-[0.3em]">Carregando Painel...</div>;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
@@ -42,6 +65,38 @@ const Dashboard: React.FC = () => {
         <MetricCard label="Faturamento O.S." value={`R$ ${osRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} icon={<Folder className="text-blue-600" />} color="bg-blue-50 border-blue-100" />
         <MetricCard label="Vendas Diretas" value={`R$ ${salesRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} icon={<TrendingUp className="text-emerald-600" />} color="bg-emerald-50 border-emerald-100" />
         <MetricCard label="Receita Total" value={`R$ ${totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} icon={<Zap className="text-amber-600" />} color="bg-amber-50 border-amber-100" />
+      </div>
+
+      {/* AI Strategy Insights Section */}
+      <div className="bg-slate-900 rounded-[40px] p-10 text-white shadow-2xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform duration-700">
+           <Sparkles size={160} />
+        </div>
+        <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+          <div className="max-w-xl">
+             <h3 className="text-2xl font-black mb-2 flex items-center gap-3">
+               <Sparkles className="text-indigo-400" /> Assistente de Crescimento FixOS
+             </h3>
+             <p className="text-slate-400 text-sm font-medium leading-relaxed">
+               {aiInsights || "Sua inteligência artificial integrada analisará o faturamento e fluxo de ordens para sugerir ações imediatas de otimização."}
+             </p>
+          </div>
+          <button 
+            onClick={handleGenerateInsights}
+            disabled={isGeneratingInsights}
+            className="bg-indigo-600 text-white px-10 py-5 rounded-[24px] font-black text-xs uppercase tracking-widest shadow-xl shadow-indigo-900/40 active:scale-95 transition-all flex items-center gap-3 disabled:opacity-50"
+          >
+            {isGeneratingInsights ? <RefreshCcw className="animate-spin" size={18} /> : <Zap size={18} />}
+            {aiInsights ? "Recalcular Sugestões" : "Gerar Insights com IA"}
+          </button>
+        </div>
+        {aiInsights && (
+          <div className="mt-10 p-8 bg-white/5 rounded-[32px] border border-white/10 backdrop-blur-md animate-in slide-in-from-top-4 duration-500">
+            <div className="text-indigo-50 text-xs font-bold whitespace-pre-wrap leading-loose italic">
+              {aiInsights}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Seção de Status */}

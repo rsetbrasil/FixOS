@@ -22,27 +22,37 @@ const FinancialManager: React.FC = () => {
   useEffect(() => {
     const loadData = async () => {
       const [o, s, a] = await Promise.all([db.getOrders(), db.getSales(), db.getFinancialAccounts()]);
-      setOrders(o);
-      setSales(s);
-      setAccs(a);
+      setOrders(o || []);
+      setSales(s || []);
+      setAccs(a || []);
       setLoading(false);
     };
     loadData();
   }, []);
 
-  const finishedOrders = orders.filter(o => (o.status === 'Finalizado' || o.status === 'Entregue') && o.updatedAt.startsWith(filterMonth));
-  const monthSales = sales.filter(s => s.createdAt.startsWith(filterMonth));
-  const monthAccs = accs.filter(a => a.status === 'PAGO' && a.dueDate.startsWith(filterMonth));
+  const finishedOrders = orders.filter(o => 
+    (o.status === 'Finalizado' || o.status === 'Entregue') && 
+    (o.updatedAt?.startsWith(filterMonth))
+  );
+  
+  const monthSales = sales.filter(s => 
+    s.createdAt?.startsWith(filterMonth)
+  );
+  
+  const monthAccs = accs.filter(a => 
+    a.status === 'PAGO' && 
+    (a.dueDate?.startsWith(filterMonth))
+  );
 
   // Cálculo de Faturamento
-  const revenueOS = finishedOrders.reduce((acc, o) => acc + o.total, 0);
-  const revenueSales = monthSales.reduce((acc, s) => acc + s.total, 0);
-  const totalRevenue = revenueOS + revenueSales + monthAccs.filter(a => a.type === 'RECEBER').reduce((acc, a) => acc + a.amount, 0);
+  const revenueOS = finishedOrders.reduce((acc, o) => acc + (o.total || 0), 0);
+  const revenueSales = monthSales.reduce((acc, s) => acc + (s.total || 0), 0);
+  const totalRevenue = revenueOS + revenueSales + monthAccs.filter(a => a.type === 'RECEBER').reduce((acc, a) => acc + (a.amount || 0), 0);
 
   // Cálculo de Custos
   const costOS = finishedOrders.reduce((acc, o) => acc + (o.totalCost || 0), 0);
   const costSales = monthSales.reduce((acc, s) => acc + (s.totalCost || 0), 0);
-  const expenses = monthAccs.filter(a => a.type === 'PAGAR').reduce((acc, a) => acc + a.amount, 0);
+  const expenses = monthAccs.filter(a => a.type === 'PAGAR').reduce((acc, a) => acc + (a.amount || 0), 0);
   const totalCost = costOS + costSales + expenses;
 
   // Lucro Real
@@ -54,7 +64,7 @@ const FinancialManager: React.FC = () => {
     { name: 'Lucro Líquido', valor: netProfit },
   ];
 
-  if (loading) return <div className="p-20 text-center font-black text-indigo-600 animate-pulse">CARREGANDO FINANCEIRO...</div>;
+  if (loading) return <div className="p-20 text-center font-black text-indigo-600 animate-pulse uppercase tracking-[0.2em]">Sincronizando Financeiro...</div>;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -68,12 +78,15 @@ const FinancialManager: React.FC = () => {
             <p className="text-slate-500 text-sm font-medium">Análise de receitas brutas vs custos reais de produtos e serviços.</p>
           </div>
         </div>
-        <input 
-          type="month" 
-          className="bg-slate-50 border-none p-4 rounded-2xl font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
-          value={filterMonth}
-          onChange={(e) => setFilterMonth(e.target.value)}
-        />
+        <div className="flex items-center gap-3">
+          <Calendar size={18} className="text-slate-400" />
+          <input 
+            type="month" 
+            className="bg-slate-50 border border-slate-200 p-4 rounded-2xl font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+            value={filterMonth}
+            onChange={(e) => setFilterMonth(e.target.value)}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -128,7 +141,7 @@ const FinancialManager: React.FC = () => {
 };
 
 const FinCard = ({ label, value, icon, color, highlight }: any) => (
-  <div className={`${color} p-8 rounded-[32px] border ${highlight ? 'border-indigo-200 ring-2 ring-indigo-500/10' : 'border-slate-100'} flex items-center justify-between group`}>
+  <div className={`${color} p-8 rounded-[32px] border ${highlight ? 'border-indigo-200 ring-2 ring-indigo-500/10' : 'border-slate-100'} flex items-center justify-between group hover:shadow-md transition-all`}>
     <div>
       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
       <p className={`text-2xl font-black ${highlight ? 'text-indigo-600' : 'text-slate-900'}`}>{value}</p>
@@ -141,7 +154,7 @@ const EntryItem = ({ label, value, total, color }: any) => (
   <div className="space-y-2">
     <div className="flex justify-between text-[10px] font-black uppercase">
       <span className="text-slate-500">{label}</span>
-      <span className="text-slate-900">R$ {value.toLocaleString()}</span>
+      <span className="text-slate-900">R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
     </div>
     <div className="w-full h-1.5 bg-slate-50 rounded-full overflow-hidden">
       <div className={`h-full ${color}`} style={{ width: `${(value / (total || 1)) * 100}%` }}></div>

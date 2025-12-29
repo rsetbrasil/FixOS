@@ -10,6 +10,7 @@ import EquipmentManager from './components/EquipmentManager';
 import SalesManager from './components/SalesManager';
 import FinancialManager from './components/FinancialManager';
 import AccountsManager from './components/AccountsManager';
+import SupplierManager from './components/SupplierManager';
 import { db } from './utils/storage';
 
 const App: React.FC = () => {
@@ -36,16 +37,7 @@ const App: React.FC = () => {
         case 'services': return <ProductManager mode="services" />;
         case 'equipment': return <EquipmentManager />;
         case 'sales': return <SalesManager />;
-        case 'suppliers':
-          return (
-            <div className="bg-white p-12 rounded-[40px] text-center shadow-sm border border-gray-100 animate-in fade-in">
-              <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 17h4V5H2v12h3m15 0h2v-3.34a4 4 0 0 0-1.17-2.83L19 9h-5"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>
-              </div>
-              <h3 className="text-2xl font-black text-gray-900 mb-2">Módulo de Fornecedores</h3>
-              <p className="text-gray-500 font-medium max-w-sm mx-auto">Em breve: Gerenciamento completo de compras, notas fiscais e logística de peças.</p>
-            </div>
-          );
+        case 'suppliers': return <SupplierManager />;
         default: return <Dashboard />;
       }
     } catch (err) {
